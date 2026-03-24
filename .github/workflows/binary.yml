@@ -1,29 +1,79 @@
-name: Update-Binary
+name: Build Flashable Zip A02
 
 on:
-  workflow_dispatch: # Biar bisa di-run manual
+  workflow_dispatch: # Klik manual dari tab Actions
 
 jobs:
-  build:
+  build_zip:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Prepare Update-Binary (AOSP Style)
+      - name: Create Flashable Structure
         run: |
-          mkdir -p output
-          # Download generic arm update-binary (biasanya pake punya openee atau lineage)
-          # Kita ambil shell-based updater (update-binary) yang kompatibel sama updater-script
-          curl -L https://github.com/skylot/jadx/raw/master/non-existent-source-example/update-binary-arm -o output/update-binary
+          # 1. Bikin folder structure standar flashable zip
+          mkdir -p zip_out/META-INF/com/google/android
+          mkdir -p zip_out/system
           
-          # Kalau lo mau pake style 'dynamic-installer' (Android 11 friendly)
-          # Kita bisa buat dummy script atau ambil dari repo toolset TWRP
-          chmod +x output/update-binary
+          # 2. Bikin update-binary (SHELL SCRIPT VERSION)
+          # Ini buat nge-bypass error 'Invalid Argument' dan 'System_root'
+          cat <<EOF > zip_out/META-INF/com/google/android/update-binary
+          #!/sbin/sh
+          # Custom Update-Binary for Samsung A02 (dm-0 bypass)
+          
+          ui_print "--------------------------------------"
+          ui_print "   LineageOS 18.1 Installer - A02    "
+          ui_print "--------------------------------------"
+          
+          # Force Unmount dulu biar gak bentrok
+          umount /system || true
+          umount /system_root || true
+          
+          ui_print "- Formatting /dev/block/dm-0 to ext4..."
+          mke2fs -t ext4 /dev/block/dm-0
+          
+          ui_print "- Mounting System..."
+          mkdir -p /system
+          mount -t ext4 /dev/block/dm-0 /system
+          
+          if [ \$? -eq 0 ]; then
+              ui_print "- Mount Berhasil! Extracting ROM..."
+              # Extract isi folder 'system' dari zip ke /system di HP
+              unzip -o "\$3" "system/*" -d /
+              ui_print "- Extraction Done!"
+          else
+              ui_print "- ERROR: Gagal mount dm-0!"
+              exit 1
+          fi
+          
+          ui_print "- Cleaning up..."
+          umount /system
+          ui_print "- Finish! Silahkan Reboot Brooooh!"
+          exit 0
+          EOF
 
-      - name: Upload Result
+          # 3. Bikin dummy updater-script (biar TWRP gak nyari-nyari)
+          echo "ui_print(\"Script executed via update-binary shell.\");" > zip_out/META-INF/com/google/android/updater-script
+
+          # 4. Permissions (PENTING: update-binary harus executable)
+          chmod 755 zip_out/META-INF/com/google/android/update-binary
+
+      - name: Copy System Files
+        run: |
+          # Di sini asumsikan lo udah punya file ROM LineageOS 18.1
+          # Copy atau download file system lo ke zip_out/system/
+          # Contoh: cp -r path/to/your/lineage_build/* zip_out/system/
+          echo "Ini file pengetesan" > zip_out/system/placeholder.txt
+
+      - name: Zip it up
+        run: |
+          cd zip_out
+          zip -r9 ../LineageOS-18.1-A02-Flashable.zip .
+
+      - name: Upload Flashable Zip
         uses: actions/upload-artifact@v4
         with:
-          name: update-binary-arm32
-          path: output/update-binary
+          name: A02-CustomROM-Zip
+          path: LineageOS-18.1-A02-Flashable.zip
