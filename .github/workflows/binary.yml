@@ -1,7 +1,11 @@
-name: Build Flashable Zip A02 F2FS
+name: Build Flashable F2FS A02
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Klik manual dari tab Actions
+
+# Biar gak muncul warning Node.js 20 lagi bro
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build_zip:
@@ -13,37 +17,45 @@ jobs:
 
       - name: Create Flashable Structure
         run: |
+          # 1. Bikin folder structure
           mkdir -p zip_out/META-INF/com/google/android
           mkdir -p zip_out/system
           
-          # Bikin update-binary yang maksa F2FS
+          # 2. Bikin update-binary (The "Brutal" Shell Script)
           cat <<EOF > zip_out/META-INF/com/google/android/update-binary
           #!/sbin/sh
-          # F2FS Force Installer for A02
+          # Custom F2FS Installer for Samsung A02 (dm-0)
           
           ui_print "--------------------------------------"
           ui_print "   LineageOS 18.1 F2FS - A02         "
+          ui_print "   Bypass System_root & Invalid Arg  "
           ui_print "--------------------------------------"
           
-          # 1. Unmount total
+          # Force Unmount biar gak busy
           umount /system || true
+          umount /system_root || true
           umount /dev/block/dm-0 || true
           
-          # 2. Paksa Format ke F2FS (pake mkfs.f2fs kalo TWRP support)
+          # Buka kunci partisi (pastiin RW)
+          ui_print "- Unlocking partition (dm-0)..."
+          blockdev --setrw /dev/block/dm-0
+          
+          # Paksa Format ke F2FS (kalo gagal, lari ke ext4)
           ui_print "- Formatting dm-0 to F2FS..."
           mkfs.f2fs -f /dev/block/dm-0 || mke2fs -t ext4 /dev/block/dm-0
           
-          # 3. Mount dengan deteksi otomatis
+          # Mount System
           ui_print "- Mounting System..."
           mkdir -p /system
           mount /dev/block/dm-0 /system
           
           if [ \$? -eq 0 ]; then
               ui_print "- Mount Berhasil! Extracting ROM..."
+              # Extract isi folder 'system' dari zip ke root (/)
               unzip -o "\$3" "system/*" -d /
               ui_print "- Extraction Done!"
           else
-              ui_print "- ERROR: Gagal mount! Partisi masih ngunci."
+              ui_print "- ERROR: Gagal mount! Cek TWRP lo."
               exit 1
           fi
           
@@ -51,9 +63,25 @@ jobs:
           exit 0
           EOF
 
+          # 3. Bikin dummy updater-script buat formalitas TWRP
+          echo "ui_print(\"F2FS Mode Active\");" > zip_out/META-INF/com/google/android/updater-script
+
+          # 4. Kasih ijin eksekusi
           chmod 755 zip_out/META-INF/com/google/android/update-binary
-          echo "ui_print(\"F2FS Bypass Active\");" > zip_out/META-INF/com/google/android/updater-script
+
+      - name: Prepare System Files
+        run: |
+          # Masukin file LineageOS lo ke folder 'system'
+          # Ganti baris di bawah ini dengan script copy file ROM asli lo
+          echo "Placeholder file" > zip_out/system/build.prop
 
       - name: Zip and Upload
         run: |
-          cd zip_out && zip -r9 ../Lineage-F2FS-A02.zip .
+          cd zip_out
+          zip -r9 ../Lineage-F2FS-A02-Final.zip .
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: A02-Flashable-F2FS
+          path: Lineage-F2FS-A02-Final.zip
